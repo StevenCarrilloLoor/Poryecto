@@ -1,0 +1,134 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: FastAPI",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "backend.src.main:app",
+        "--reload",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ],
+      "jinja": true,
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src",
+        "ENV": "development"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Python: Celery Worker",
+      "type": "python",
+      "request": "launch",
+      "module": "celery",
+      "args": [
+        "-A",
+        "backend.src.infrastructure.tasks.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--pool=solo"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src",
+        "ENV": "development"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Python: Alembic Migrations",
+      "type": "python",
+      "request": "launch",
+      "module": "alembic",
+      "args": [
+        "upgrade",
+        "head"
+      ],
+      "cwd": "${workspaceFolder}/backend",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Python: Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src"
+      },
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "Python: Pytest",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "-v",
+        "-s",
+        "--cov=backend/src",
+        "--cov-report=html"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend/src",
+        "ENV": "test"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "React: Chrome",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}/frontend/src",
+      "sourceMapPathOverrides": {
+        "webpack:///src/*": "${webRoot}/*"
+      },
+      "preLaunchTask": "npm: start - frontend"
+    },
+    {
+      "name": "React: Debug Tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/frontend/node_modules/.bin/react-scripts",
+      "args": ["test", "--runInBand", "--no-cache", "--watchAll=false"],
+      "cwd": "${workspaceFolder}/frontend",
+      "protocol": "inspector",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "env": {
+        "CI": "true"
+      }
+    },
+    {
+      "name": "SQL Server: Execute Query",
+      "type": "mssql",
+      "request": "launch",
+      "preLaunchTask": "sqltools.connect"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack",
+      "configurations": ["Python: FastAPI", "React: Chrome"],
+      "stopAll": true
+    },
+    {
+      "name": "Backend + Celery",
+      "configurations": ["Python: FastAPI", "Python: Celery Worker"],
+      "stopAll": true
+    }
+  ]
+}
