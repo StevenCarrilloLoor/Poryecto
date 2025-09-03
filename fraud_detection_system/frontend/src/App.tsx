@@ -1,190 +1,123 @@
-// frontend/src/App.tsx
+/**
+ * Componente principal de la aplicación React
+ * frontend/src/App.tsx
+ */
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
-import { CssBaseline, Box } from '@mui/material';
-import { SnackbarProvider } from 'notistack';
+import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import esLocale from 'date-fns/locale/es';
 
-// Components
-import Layout from './components/Layout/Layout';
-import PrivateRoute from './components/Auth/PrivateRoute';
+import Dashboard from './components/Dashboard';
+import HomePage from './pages/HomePage';
 
-// Pages
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import FraudCases from './pages/FraudCases';
-import FraudCaseDetail from './pages/FraudCaseDetail';
-import Detectors from './pages/Detectors';
-import Reports from './pages/Reports';
-import Settings from './pages/Settings';
-import NotFound from './pages/NotFound';
-
-// Context
-import { AuthProvider } from './context/AuthContext';
-import { WebSocketProvider } from './context/WebSocketContext';
-
-// Create theme
+// Configurar tema de Material-UI
 const theme = createTheme({
   palette: {
-    mode: 'dark',
+    mode: 'light',
     primary: {
-      main: '#ff6b6b',
-      light: '#ff9999',
-      dark: '#cc5555',
+      main: '#1976d2',
+      light: '#42a5f5',
+      dark: '#1565c0',
     },
     secondary: {
-      main: '#4ecdc4',
-      light: '#7ed8d3',
-      dark: '#3ea39b',
+      main: '#dc004e',
+      light: '#f50057',
+      dark: '#9a0036',
     },
     error: {
-      main: '#ff4757',
+      main: '#f44336',
     },
     warning: {
-      main: '#ffa502',
+      main: '#ff9800',
     },
     success: {
-      main: '#32ff7e',
+      main: '#4caf50',
     },
     background: {
-      default: '#0f0f0f',
-      paper: '#1a1a1a',
-    },
-    text: {
-      primary: '#ffffff',
-      secondary: '#b0b0b0',
+      default: '#f5f5f5',
+      paper: '#ffffff',
     },
   },
   typography: {
-    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
     h1: {
       fontSize: '2.5rem',
-      fontWeight: 700,
-      letterSpacing: '-0.02em',
+      fontWeight: 500,
     },
     h2: {
       fontSize: '2rem',
-      fontWeight: 600,
-      letterSpacing: '-0.01em',
+      fontWeight: 500,
     },
     h3: {
-      fontSize: '1.5rem',
-      fontWeight: 600,
+      fontSize: '1.75rem',
+      fontWeight: 500,
     },
     h4: {
-      fontSize: '1.25rem',
+      fontSize: '1.5rem',
       fontWeight: 500,
     },
     h5: {
-      fontSize: '1rem',
+      fontSize: '1.25rem',
       fontWeight: 500,
     },
     h6: {
-      fontSize: '0.875rem',
+      fontSize: '1rem',
       fontWeight: 500,
     },
   },
   shape: {
-    borderRadius: 12,
+    borderRadius: 8,
   },
   components: {
-    MuiCard: {
-      styleOverrides: {
-        root: {
-          backgroundImage: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-        },
-      },
-    },
     MuiButton: {
       styleOverrides: {
         root: {
           textTransform: 'none',
-          fontWeight: 500,
-          borderRadius: 8,
-        },
-        contained: {
-          boxShadow: 'none',
-          '&:hover': {
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-          },
         },
       },
     },
-    MuiPaper: {
+    MuiCard: {
       styleOverrides: {
         root: {
-          backgroundImage: 'linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
         },
       },
     },
   },
 });
 
-// Create QueryClient
+// Configurar React Query
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 3,
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      retry: 1,
+      staleTime: 30 * 1000, // 30 segundos
     },
   },
 });
 
-function App() {
+const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>
         <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={esLocale}>
-          <SnackbarProvider 
-            maxSnack={3}
-            anchorOrigin={{
-              vertical: 'top',
-              horizontal: 'right',
-            }}
-            autoHideDuration={5000}
-          >
-            <CssBaseline />
-            <AuthProvider>
-              <WebSocketProvider>
-                <Router>
-                  <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-                    <Routes>
-                      {/* Public routes */}
-                      <Route path="/login" element={<Login />} />
-                      
-                      {/* Private routes */}
-                      <Route element={<PrivateRoute />}>
-                        <Route element={<Layout />}>
-                          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                          <Route path="/dashboard" element={<Dashboard />} />
-                          <Route path="/fraud-cases" element={<FraudCases />} />
-                          <Route path="/fraud-cases/:id" element={<FraudCaseDetail />} />
-                          <Route path="/detectors" element={<Detectors />} />
-                          <Route path="/reports" element={<Reports />} />
-                          <Route path="/settings" element={<Settings />} />
-                        </Route>
-                      </Route>
-                      
-                      {/* 404 */}
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </Box>
-                </Router>
-              </WebSocketProvider>
-            </AuthProvider>
-          </SnackbarProvider>
+          <CssBaseline />
+          <Router>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Router>
         </LocalizationProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );
-}
+};
 
 export default App;
