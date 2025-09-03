@@ -1,0 +1,21 @@
+"""
+Punto de entrada principal del backend
+backend/__main__.py
+"""
+
+import sys
+import os
+
+# Agregar el directorio backend al path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if __name__ == "__main__":
+    import uvicorn
+    from api.main import app
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
