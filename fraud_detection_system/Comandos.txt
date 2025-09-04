@@ -13,3 +13,18 @@ sqlcmd -S "STEVEN-ALIENWAR\SQLTRABAJO" -E -Q "CREATE DATABASE FraudDetectionDB"
 
 # Verificar que existe
 sqlcmd -S "STEVEN-ALIENWAR\SQLTRABAJO" -E -Q "SELECT name FROM sys.databases WHERE name = 'FraudDetectionDB'"
+
+
+
+
+----------DESACTIVAR ENTORNO------------------
+# Primero desactiva el entorno actual
+deactivate
+
+-----------Activar ENTORNO-----------
+# Ahora activa el entorno de 32 bits
+.\venv32\Scripts\Activate.ps1
+depedencias32:
+pip install fastapi uvicorn sqlalchemy pyodbc python-dotenv pydantic websockets
+# Ahora activa el entorno de 64 bits
+.\venv\Scripts\Activate.ps1
