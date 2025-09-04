@@ -28,3 +28,8 @@ depedencias32:
 pip install fastapi uvicorn sqlalchemy pyodbc python-dotenv pydantic websockets
 # Ahora activa el entorno de 64 bits
 .\venv\Scripts\Activate.ps1
+
+
+----------NO OLVIDAR CAMBIAR EL INTERTREPE EN EL TERMINAL A 32 O 64------------------
+.\venv32\Scripts\python.exe
+.\venv\Scripts\python.exe

@@ -6,7 +6,7 @@ backend/database/db_context.py
 import os
 import json
 import pyodbc
-import firebird.driver as fdb
+#import firebird.driver as fdb
 from typing import Optional, List, Dict, Any, Generator
 from contextlib import contextmanager
 from datetime import datetime
