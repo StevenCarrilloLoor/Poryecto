@@ -2,3 +2,14 @@ cd backend
 python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ----Front-----
 npm run dev
+
+
+
+--------CTREAR DB USE POWERSHELL ADMINISTRADOR----
+# Crear la base de datos
+sqlcmd -S "STEVEN-ALIENWAR\SQLTRABAJO" -E -Q "CREATE DATABASE FraudDetectionDB"
+
+# Si ya existe, te dirá que ya existe (está bien)
+
+# Verificar que existe
+sqlcmd -S "STEVEN-ALIENWAR\SQLTRABAJO" -E -Q "SELECT name FROM sys.databases WHERE name = 'FraudDetectionDB'"
