@@ -1,12 +1,10 @@
 """
-DbContext personalizado para el manejo de base de datos
-backend/database/db_context.py
+DbContext corregido final - backend/database/db_context.py
 """
 
 import os
 import json
 import pyodbc
-#import firebird.driver as fdb
 from typing import Optional, List, Dict, Any, Generator
 from contextlib import contextmanager
 from datetime import datetime
@@ -17,7 +15,7 @@ from sqlalchemy.orm import sessionmaker, Session, scoped_session
 from sqlalchemy.engine import Engine
 from dotenv import load_dotenv
 
-from models.fraud_models import Base, FraudCase, DetectorConfig, AuditLog
+from models.fraud_models import Base, FraudCase, DetectorConfig, AuditLog, FraudStatus
 
 load_dotenv()
 
@@ -104,18 +102,35 @@ class FraudDetectionDbContext:
             session.close()
     
     def get_firebird_connection(self):
-        """Obtiene conexión a Firebird"""
-        if not self.firebird_connection:
-            try:
-                dsn = os.getenv('FIREBIRD_DSN')
-                self.firebird_connection = pyodbc.connect(dsn)
-            except Exception as e:
-                print(f"Error conectando a Firebird: {e}")
-                raise
-        return self.firebird_connection
+        """Obtiene conexión a Firebird con manejo de reconexión"""
+        try:
+            # Verificar si la conexión existe y está activa
+            if self.firebird_connection:
+                # Intentar una query simple para verificar la conexión
+                cursor = self.firebird_connection.cursor()
+                cursor.execute("SELECT 1 FROM RDB$DATABASE")
+                cursor.close()
+                return self.firebird_connection
+        except:
+            # Si falla, cerrar la conexión antigua
+            if self.firebird_connection:
+                try:
+                    self.firebird_connection.close()
+                except:
+                    pass
+                self.firebird_connection = None
+        
+        # Crear nueva conexión
+        try:
+            dsn = os.getenv('FIREBIRD_DSN')
+            self.firebird_connection = pyodbc.connect(dsn, timeout=10)
+            return self.firebird_connection
+        except Exception as e:
+            print(f"Error conectando a Firebird: {e}")
+            raise
     
-    def execute_firebird_query(self, query: str, params: tuple = None) -> List[Dict]:
-        """Ejecuta query en Firebird y retorna resultados como lista de diccionarios"""
+    def execute_firebird_query(self, query: str, params: tuple = None, fetch_size: int = 1000) -> List[Dict]:
+        """Ejecuta query en Firebird con límite de resultados"""
         conn = self.get_firebird_connection()
         cursor = conn.cursor()
         
@@ -128,8 +143,14 @@ class FraudDetectionDbContext:
             columns = [column[0] for column in cursor.description]
             results = []
             
-            for row in cursor.fetchall():
+            # Limitar resultados para evitar que se cuelgue
+            row_count = 0
+            while row_count < fetch_size:
+                row = cursor.fetchone()
+                if not row:
+                    break
                 results.append(dict(zip(columns, row)))
+                row_count += 1
             
             return results
             
@@ -159,27 +180,71 @@ class FraudDetectionDbContext:
             return query.order_by(FraudCase.detection_date.desc()).limit(limit).all()
     
     def create_fraud_case(self, fraud_data: Dict[str, Any]) -> FraudCase:
-        """Crea un nuevo caso de fraude"""
+        """Crea un nuevo caso de fraude y retorna el objeto completo"""
         with self.get_session() as session:
             # Generar número de caso único
             import uuid
             fraud_data['case_number'] = f"FRAUD-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
             
+            # Asegurar que status tenga un valor por defecto
+            if 'status' not in fraud_data or fraud_data['status'] is None:
+                fraud_data['status'] = FraudStatus.PENDING
+            
+            # Crear instancia del caso
             fraud_case = FraudCase(**fraud_data)
+            
+            # Agregar a la sesión y hacer commit
             session.add(fraud_case)
             session.commit()
+            
+            # Hacer refresh para obtener el ID generado
             session.refresh(fraud_case)
             
-            # Registrar en auditoría
-            self.log_audit(
+            # Obtener todos los datos necesarios antes de cerrar la sesión
+            case_data = {
+                'id': fraud_case.id,
+                'case_number': fraud_case.case_number,
+                'detector_type': fraud_case.detector_type.value if fraud_case.detector_type else None,
+                'severity': fraud_case.severity.value if fraud_case.severity else None,
+                'status': fraud_case.status.value if fraud_case.status else 'PENDIENTE',
+                'title': fraud_case.title,
+                'description': fraud_case.description,
+                'amount': float(fraud_case.amount) if fraud_case.amount else None,
+                'source_table': fraud_case.source_table,
+                'source_record_id': fraud_case.source_record_id,
+                'transaction_date': fraud_case.transaction_date,
+                'client_code': fraud_case.client_code,
+                'client_name': fraud_case.client_name,
+                'client_ruc': fraud_case.client_ruc,
+                'detection_date': fraud_case.detection_date,
+                'detection_rules': fraud_case.detection_rules,
+                'confidence_score': float(fraud_case.confidence_score) if fraud_case.confidence_score else None,
+                'created_at': fraud_case.created_at,
+                'updated_at': fraud_case.updated_at,
+                'created_by': fraud_case.created_by,
+                'updated_by': fraud_case.updated_by
+            }
+            
+            # Registrar en auditoría (en la misma sesión)
+            audit_log = AuditLog(
                 action="CREATE_FRAUD_CASE",
                 entity_type="FraudCase",
                 entity_id=str(fraud_case.id),
                 new_values=json.dumps(fraud_data, default=str),
-                user="SYSTEM"
+                user="SYSTEM",
+                fraud_case_id=fraud_case.id,
+                timestamp=datetime.utcnow()
             )
+            session.add(audit_log)
+            session.commit()
             
-            return fraud_case
+            # Crear un objeto mock con todos los atributos necesarios
+            class FraudCaseMock:
+                def __init__(self, data):
+                    for key, value in data.items():
+                        setattr(self, key, value)
+            
+            return FraudCaseMock(case_data)
     
     def update_fraud_case_status(self, case_id: int, new_status: str, user: str, notes: str = None) -> bool:
         """Actualiza el estado de un caso de fraude"""
@@ -195,15 +260,17 @@ class FraudDetectionDbContext:
             fraud_case.updated_at = datetime.utcnow()
             
             # Log audit
-            self.log_audit(
+            audit_log = AuditLog(
                 action="UPDATE_STATUS",
                 entity_type="FraudCase",
                 entity_id=str(case_id),
                 old_values=json.dumps({"status": old_status}),
                 new_values=json.dumps({"status": new_status, "notes": notes}),
                 user=user,
-                fraud_case_id=case_id
+                fraud_case_id=case_id,
+                timestamp=datetime.utcnow()
             )
+            session.add(audit_log)
             
             session.commit()
             return True
@@ -246,17 +313,24 @@ class FraudDetectionDbContext:
             
             cases = query.all()
             
+            # Manejar valores None en status y severity
+            def safe_enum_value(obj, attr):
+                val = getattr(obj, attr, None)
+                if val and hasattr(val, 'value'):
+                    return val.value
+                return None
+            
             return {
                 "total_cases": len(cases),
-                "pending": len([c for c in cases if c.status.value == "PENDIENTE"]),
-                "confirmed": len([c for c in cases if c.status.value == "CONFIRMADO"]),
-                "rejected": len([c for c in cases if c.status.value == "RECHAZADO"]),
-                "total_amount": sum([c.amount or 0 for c in cases]),
+                "pending": len([c for c in cases if safe_enum_value(c, 'status') == "PENDIENTE"]),
+                "confirmed": len([c for c in cases if safe_enum_value(c, 'status') == "CONFIRMADO"]),
+                "rejected": len([c for c in cases if safe_enum_value(c, 'status') == "RECHAZADO"]),
+                "total_amount": sum([float(c.amount) if c.amount else 0 for c in cases]),
                 "by_severity": {
-                    "CRITICO": len([c for c in cases if c.severity.value == "CRITICO"]),
-                    "ALTO": len([c for c in cases if c.severity.value == "ALTO"]),
-                    "MEDIO": len([c for c in cases if c.severity.value == "MEDIO"]),
-                    "BAJO": len([c for c in cases if c.severity.value == "BAJO"])
+                    "CRITICO": len([c for c in cases if safe_enum_value(c, 'severity') == "CRITICO"]),
+                    "ALTO": len([c for c in cases if safe_enum_value(c, 'severity') == "ALTO"]),
+                    "MEDIO": len([c for c in cases if safe_enum_value(c, 'severity') == "MEDIO"]),
+                    "BAJO": len([c for c in cases if safe_enum_value(c, 'severity') == "BAJO"])
                 }
             }
     

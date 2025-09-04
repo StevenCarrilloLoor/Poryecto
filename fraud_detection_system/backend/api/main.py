@@ -130,17 +130,56 @@ async def get_fraud_cases(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/fraud-cases/{case_id}", response_model=FraudCaseResponse, tags=["Fraud Cases"])
-async def get_fraud_case(case_id: int):
-    """Obtiene un caso de fraude específico"""
-    with db_context.get_session() as session:
-        from models.fraud_models import FraudCase
-        case = session.query(FraudCase).filter(FraudCase.id == case_id).first()
+# Fragmento corregido para backend/api/main.py
+# Reemplazar el endpoint get_fraud_cases
+
+@app.get("/api/fraud-cases", response_model=List[FraudCaseResponse], tags=["Fraud Cases"])
+async def get_fraud_cases(
+    status: Optional[FraudStatus] = None,
+    detector_type: Optional[DetectorType] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    limit: int = Query(default=100, le=500)
+):
+    """Obtiene lista de casos de fraude con filtros opcionales"""
+    try:
+        cases = db_context.get_fraud_cases(
+            status=status.value if status else None,
+            detector_type=detector_type.value if detector_type else None,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit
+        )
         
-        if not case:
-            raise HTTPException(status_code=404, detail="Caso no encontrado")
+        # Convertir casos a formato de respuesta
+        response_cases = []
+        for case in cases:
+            try:
+                # Manejar valores que pueden ser None o Enum
+                response_case = {
+                    'id': case.id,
+                    'case_number': case.case_number,
+                    'detector_type': case.detector_type.value if case.detector_type else 'UNKNOWN',
+                    'severity': case.severity.value if case.severity else 'MEDIO',
+                    'status': case.status.value if case.status else 'PENDIENTE',
+                    'title': case.title or 'Sin título',
+                    'description': case.description,
+                    'amount': float(case.amount) if case.amount else None,
+                    'client_code': case.client_code,
+                    'client_name': case.client_name,
+                    'detection_date': case.detection_date or datetime.utcnow(),
+                    'confidence_score': float(case.confidence_score) if case.confidence_score else None,
+                }
+                response_cases.append(FraudCaseResponse(**response_case))
+            except Exception as e:
+                print(f"Error procesando caso {case.id}: {e}")
+                continue
         
-        return FraudCaseResponse.model_validate(case)
+        return response_cases
+    
+    except Exception as e:
+        print(f"Error en get_fraud_cases: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.patch("/api/fraud-cases/{case_id}/status", tags=["Fraud Cases"])
 async def update_fraud_case_status(case_id: int, request: UpdateStatusRequest):
@@ -279,7 +318,9 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Background task para detección automática
+# Fragmento corregido para backend/api/main.py
+# Reemplazar la función automatic_detection
+
 async def automatic_detection():
     """Ejecuta detección automática cada 5 minutos"""
     while True:
@@ -294,20 +335,42 @@ async def automatic_detection():
             ]
             
             for detector in detectors:
-                results = detector.detect()
-                
-                for fraud_data in results:
-                    try:
-                        case = db_context.create_fraud_case(fraud_data)
-                        
-                        # Notificar via WebSocket
-                        await manager.broadcast(json.dumps({
-                            "event": "auto_detection",
-                            "case": FraudCaseResponse.model_validate(case).model_dump(mode='json')
-                        }))
-                        
-                    except Exception as e:
-                        print(f"Error en detección automática: {e}")
+                try:
+                    results = detector.detect()
+                    
+                    for fraud_data in results:
+                        try:
+                            case = db_context.create_fraud_case(fraud_data)
+                            
+                            # Preparar datos para WebSocket
+                            case_dict = {
+                                'id': case.id,
+                                'case_number': case.case_number,
+                                'detector_type': case.detector_type if isinstance(case.detector_type, str) else case.detector_type.value,
+                                'severity': case.severity if isinstance(case.severity, str) else case.severity.value,
+                                'status': case.status if isinstance(case.status, str) else 'PENDIENTE',
+                                'title': case.title or 'Sin título',
+                                'description': case.description or '',
+                                'amount': case.amount,
+                                'client_code': case.client_code or '',
+                                'client_name': case.client_name or '',
+                                'detection_date': case.detection_date.isoformat() if case.detection_date else datetime.utcnow().isoformat(),
+                                'confidence_score': case.confidence_score
+                            }
+                            
+                            # Notificar via WebSocket
+                            await manager.broadcast(json.dumps({
+                                "event": "auto_detection",
+                                "case": case_dict
+                            }))
+                            
+                        except Exception as e:
+                            print(f"Error guardando caso en detección automática: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            
+                except Exception as e:
+                    print(f"Error ejecutando detector {detector.__class__.__name__}: {e}")
         
         except Exception as e:
             print(f"Error en ciclo de detección: {e}")
