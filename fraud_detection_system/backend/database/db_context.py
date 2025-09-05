@@ -265,18 +265,32 @@ class FraudDetectionDbContext:
             if not fraud_case:
                 return False
             
-            old_status = fraud_case.status
-            fraud_case.status = new_status
+            # Obtener el valor string del status anterior
+            old_status_value = fraud_case.status.value if fraud_case.status else 'PENDIENTE'
+            
+            # Convertir el nuevo status a enum si viene como string
+            if isinstance(new_status, str):
+                # Buscar el enum correspondiente
+                for status in FraudStatus:
+                    if status.value == new_status:
+                        fraud_case.status = status
+                        break
+            else:
+                fraud_case.status = new_status
+            
             fraud_case.updated_by = user
             fraud_case.updated_at = datetime.utcnow()
             
-            # Log audit
+            # Log audit con valores string (NO con el enum directamente)
             audit_log = AuditLog(
                 action="UPDATE_STATUS",
                 entity_type="FraudCase",
                 entity_id=str(case_id),
-                old_values=json.dumps({"status": old_status}),
-                new_values=json.dumps({"status": new_status, "notes": notes}),
+                old_values=json.dumps({"status": old_status_value}),  # Usar el valor string
+                new_values=json.dumps({
+                    "status": new_status if isinstance(new_status, str) else new_status.value, 
+                    "notes": notes
+                }),
                 user=user,
                 fraud_case_id=case_id,
                 timestamp=datetime.utcnow()
@@ -288,6 +302,7 @@ class FraudDetectionDbContext:
             
         except Exception as e:
             session.rollback()
+            print(f"Error actualizando estado: {e}")
             raise e
         finally:
             session.close()
