@@ -1,6 +1,5 @@
 """
-API FastAPI principal del sistema de detección de fraude
-backend/api/main.py
+API FastAPI principal CORREGIDA - backend/api/main.py
 """
 
 from datetime import datetime, timedelta
@@ -36,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modelos Pydantic para requests/responses
+# Modelos Pydantic
 class FraudCaseResponse(BaseModel):
     id: int
     case_number: str
@@ -75,7 +74,7 @@ class DashboardStats(BaseModel):
     detection_rate_today: int
     detection_rate_week: int
 
-# WebSocket manager para tiempo real
+# WebSocket manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -92,11 +91,14 @@ class ConnectionManager:
 
     async def broadcast(self, message: str):
         for connection in self.active_connections:
-            await connection.send_text(message)
+            try:
+                await connection.send_text(message)
+            except:
+                pass
 
 manager = ConnectionManager()
 
-# Endpoints principales
+# Endpoints
 
 @app.get("/", tags=["Health"])
 async def root():
@@ -117,6 +119,7 @@ async def get_fraud_cases(
 ):
     """Obtiene lista de casos de fraude con filtros opcionales"""
     try:
+        # get_fraud_cases ahora retorna diccionarios
         cases = db_context.get_fraud_cases(
             status=status.value if status else None,
             detector_type=detector_type.value if detector_type else None,
@@ -125,61 +128,62 @@ async def get_fraud_cases(
             limit=limit
         )
         
-        return [FraudCaseResponse.model_validate(case) for case in cases]
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Fragmento corregido para backend/api/main.py
-# Reemplazar el endpoint get_fraud_cases
-
-@app.get("/api/fraud-cases", response_model=List[FraudCaseResponse], tags=["Fraud Cases"])
-async def get_fraud_cases(
-    status: Optional[FraudStatus] = None,
-    detector_type: Optional[DetectorType] = None,
-    date_from: Optional[datetime] = None,
-    date_to: Optional[datetime] = None,
-    limit: int = Query(default=100, le=500)
-):
-    """Obtiene lista de casos de fraude con filtros opcionales"""
-    try:
-        cases = db_context.get_fraud_cases(
-            status=status.value if status else None,
-            detector_type=detector_type.value if detector_type else None,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit
-        )
-        
-        # Convertir casos a formato de respuesta
+        # Convertir diccionarios a FraudCaseResponse
         response_cases = []
-        for case in cases:
+        for case_dict in cases:
             try:
-                # Manejar valores que pueden ser None o Enum
-                response_case = {
-                    'id': case.id,
-                    'case_number': case.case_number,
-                    'detector_type': case.detector_type.value if case.detector_type else 'UNKNOWN',
-                    'severity': case.severity.value if case.severity else 'MEDIO',
-                    'status': case.status.value if case.status else 'PENDIENTE',
-                    'title': case.title or 'Sin título',
-                    'description': case.description,
-                    'amount': float(case.amount) if case.amount else None,
-                    'client_code': case.client_code,
-                    'client_name': case.client_name,
-                    'detection_date': case.detection_date or datetime.utcnow(),
-                    'confidence_score': float(case.confidence_score) if case.confidence_score else None,
+                # Asegurar que todos los campos requeridos estén presentes
+                response_data = {
+                    'id': case_dict.get('id'),
+                    'case_number': case_dict.get('case_number', ''),
+                    'detector_type': case_dict.get('detector_type', 'UNKNOWN'),
+                    'severity': case_dict.get('severity', 'MEDIO'),
+                    'status': case_dict.get('status', 'PENDIENTE'),
+                    'title': case_dict.get('title', 'Sin título'),
+                    'description': case_dict.get('description'),
+                    'amount': case_dict.get('amount'),
+                    'client_code': case_dict.get('client_code'),
+                    'client_name': case_dict.get('client_name'),
+                    'detection_date': case_dict.get('detection_date', datetime.utcnow()),
+                    'confidence_score': case_dict.get('confidence_score')
                 }
-                response_cases.append(FraudCaseResponse(**response_case))
+                response_cases.append(FraudCaseResponse(**response_data))
             except Exception as e:
-                print(f"Error procesando caso {case.id}: {e}")
+                print(f"Error procesando caso: {e}")
                 continue
         
         return response_cases
     
     except Exception as e:
         print(f"Error en get_fraud_cases: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/fraud-cases/{case_id}", response_model=FraudCaseResponse, tags=["Fraud Cases"])
+async def get_fraud_case(case_id: int):
+    """Obtiene un caso de fraude específico"""
+    cases = db_context.get_fraud_cases(limit=1)
+    
+    for case_dict in cases:
+        if case_dict.get('id') == case_id:
+            response_data = {
+                'id': case_dict.get('id'),
+                'case_number': case_dict.get('case_number', ''),
+                'detector_type': case_dict.get('detector_type', 'UNKNOWN'),
+                'severity': case_dict.get('severity', 'MEDIO'),
+                'status': case_dict.get('status', 'PENDIENTE'),
+                'title': case_dict.get('title', 'Sin título'),
+                'description': case_dict.get('description'),
+                'amount': case_dict.get('amount'),
+                'client_code': case_dict.get('client_code'),
+                'client_name': case_dict.get('client_name'),
+                'detection_date': case_dict.get('detection_date', datetime.utcnow()),
+                'confidence_score': case_dict.get('confidence_score')
+            }
+            return FraudCaseResponse(**response_data)
+    
+    raise HTTPException(status_code=404, detail="Caso no encontrado")
 
 @app.patch("/api/fraud-cases/{case_id}/status", tags=["Fraud Cases"])
 async def update_fraud_case_status(case_id: int, request: UpdateStatusRequest):
@@ -211,7 +215,7 @@ async def run_detection(request: DetectorRunRequest):
         results = []
         detectors = []
         
-        # Configurar detectores según request
+        # Configurar detectores
         if not request.detector_types or DetectorType.INVOICE_ANOMALY in request.detector_types:
             detectors.append(FacturasAnomalias())
         if not request.detector_types or DetectorType.FUEL_THEFT in request.detector_types:
@@ -223,7 +227,6 @@ async def run_detection(request: DetectorRunRequest):
         for detector in detectors:
             detector_results = detector.detect()
             
-            # Guardar casos detectados
             for fraud_data in detector_results:
                 try:
                     case = db_context.create_fraud_case(fraud_data)
@@ -234,10 +237,25 @@ async def run_detection(request: DetectorRunRequest):
                         "title": case.title
                     })
                     
-                    # Notificar via WebSocket
+                    # Preparar datos para WebSocket
+                    case_dict = {
+                        'id': case.id,
+                        'case_number': case.case_number,
+                        'detector_type': case.detector_type if isinstance(case.detector_type, str) else case.detector_type,
+                        'severity': case.severity if isinstance(case.severity, str) else case.severity,
+                        'status': case.status if isinstance(case.status, str) else 'PENDIENTE',
+                        'title': case.title or 'Sin título',
+                        'description': case.description or '',
+                        'amount': case.amount,
+                        'client_code': case.client_code or '',
+                        'client_name': case.client_name or '',
+                        'detection_date': case.detection_date.isoformat() if case.detection_date else datetime.utcnow().isoformat(),
+                        'confidence_score': case.confidence_score
+                    }
+                    
                     await manager.broadcast(json.dumps({
                         "event": "new_case",
-                        "case": FraudCaseResponse.model_validate(case).model_dump(mode='json')
+                        "case": case_dict
                     }))
                     
                 except Exception as e:
@@ -259,8 +277,30 @@ async def get_dashboard_stats():
         # Obtener estadísticas generales
         stats = db_context.get_fraud_statistics()
         
-        # Obtener casos recientes
-        recent_cases = db_context.get_fraud_cases(limit=10)
+        # Obtener casos recientes (devuelve diccionarios)
+        recent_cases_dicts = db_context.get_fraud_cases(limit=10)
+        
+        # Convertir a FraudCaseResponse
+        recent_cases = []
+        for case_dict in recent_cases_dicts:
+            try:
+                response_data = {
+                    'id': case_dict.get('id'),
+                    'case_number': case_dict.get('case_number', ''),
+                    'detector_type': case_dict.get('detector_type', 'UNKNOWN'),
+                    'severity': case_dict.get('severity', 'MEDIO'),
+                    'status': case_dict.get('status', 'PENDIENTE'),
+                    'title': case_dict.get('title', 'Sin título'),
+                    'description': case_dict.get('description'),
+                    'amount': case_dict.get('amount'),
+                    'client_code': case_dict.get('client_code'),
+                    'client_name': case_dict.get('client_name'),
+                    'detection_date': case_dict.get('detection_date', datetime.utcnow()),
+                    'confidence_score': case_dict.get('confidence_score')
+                }
+                recent_cases.append(FraudCaseResponse(**response_data))
+            except:
+                continue
         
         # Calcular tasas de detección
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -276,7 +316,7 @@ async def get_dashboard_stats():
             rejected_cases=stats["rejected"],
             total_amount=float(stats["total_amount"]),
             cases_by_severity=stats["by_severity"],
-            recent_cases=[FraudCaseResponse.model_validate(c) for c in recent_cases],
+            recent_cases=recent_cases,
             detection_rate_today=today_stats["total_cases"],
             detection_rate_week=week_stats["total_cases"]
         )
@@ -292,7 +332,7 @@ async def get_detector_configs():
     return [
         {
             "id": config.id,
-            "detector_type": config.detector_type.value,
+            "detector_type": config.detector_type.value if config.detector_type else None,
             "enabled": config.enabled,
             "name": config.name,
             "description": config.description,
@@ -309,7 +349,6 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         while True:
-            # Mantener conexión viva
             data = await websocket.receive_text()
             
             if data == "ping":
@@ -318,16 +357,13 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Fragmento corregido para backend/api/main.py
-# Reemplazar la función automatic_detection
-
+# Background task para detección automática
 async def automatic_detection():
     """Ejecuta detección automática cada 5 minutos"""
     while True:
         await asyncio.sleep(300)  # 5 minutos
         
         try:
-            # Ejecutar detectores
             detectors = [
                 FacturasAnomalias(),
                 RoboDeCombustible(),
@@ -346,28 +382,25 @@ async def automatic_detection():
                             case_dict = {
                                 'id': case.id,
                                 'case_number': case.case_number,
-                                'detector_type': case.detector_type if isinstance(case.detector_type, str) else case.detector_type.value,
-                                'severity': case.severity if isinstance(case.severity, str) else case.severity.value,
-                                'status': case.status if isinstance(case.status, str) else 'PENDIENTE',
-                                'title': case.title or 'Sin título',
-                                'description': case.description or '',
-                                'amount': case.amount,
-                                'client_code': case.client_code or '',
-                                'client_name': case.client_name or '',
-                                'detection_date': case.detection_date.isoformat() if case.detection_date else datetime.utcnow().isoformat(),
-                                'confidence_score': case.confidence_score
+                                'detector_type': getattr(case, 'detector_type', 'UNKNOWN'),
+                                'severity': getattr(case, 'severity', 'MEDIO'),
+                                'status': getattr(case, 'status', 'PENDIENTE'),
+                                'title': getattr(case, 'title', 'Sin título'),
+                                'description': getattr(case, 'description', ''),
+                                'amount': getattr(case, 'amount', None),
+                                'client_code': getattr(case, 'client_code', ''),
+                                'client_name': getattr(case, 'client_name', ''),
+                                'detection_date': datetime.utcnow().isoformat(),
+                                'confidence_score': getattr(case, 'confidence_score', None)
                             }
                             
-                            # Notificar via WebSocket
                             await manager.broadcast(json.dumps({
                                 "event": "auto_detection",
                                 "case": case_dict
                             }))
                             
                         except Exception as e:
-                            print(f"Error guardando caso en detección automática: {e}")
-                            import traceback
-                            traceback.print_exc()
+                            print(f"Error en detección automática: {e}")
                             
                 except Exception as e:
                     print(f"Error ejecutando detector {detector.__class__.__name__}: {e}")

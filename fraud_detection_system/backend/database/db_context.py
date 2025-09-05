@@ -1,5 +1,5 @@
 """
-DbContext corregido final - backend/database/db_context.py
+DbContext FINAL COMPLETO - backend/database/db_context.py
 """
 
 import os
@@ -22,7 +22,6 @@ load_dotenv()
 class FraudDetectionDbContext:
     """
     Contexto de base de datos personalizado para el sistema de detección de fraude.
-    Maneja tanto SQL Server (para datos de fraude) como Firebird (para datos fuente).
     """
     
     def __init__(self):
@@ -34,7 +33,6 @@ class FraudDetectionDbContext:
     def _initialize_sql_server(self):
         """Inicializa la conexión a SQL Server"""
         try:
-            # Construir cadena de conexión para SQL Server
             server = os.getenv('DB_SERVER', 'STEVEN-ALIENWAR\\SQLTRABAJO')
             database = os.getenv('DB_DATABASE', 'FraudDetectionDB')
             
@@ -52,7 +50,6 @@ class FraudDetectionDbContext:
                     f"?driver=ODBC+Driver+17+for+SQL+Server"
                 )
             
-            # Crear engine con pool de conexiones
             self.sql_server_engine = create_engine(
                 connection_string,
                 poolclass=pool.QueuePool,
@@ -60,19 +57,18 @@ class FraudDetectionDbContext:
                 max_overflow=10,
                 pool_timeout=30,
                 pool_recycle=3600,
-                echo=os.getenv('LOG_LEVEL', 'INFO') == 'DEBUG'
+                echo=False  # Cambiar a False para menos logs
             )
             
-            # Crear session factory
             self.SessionLocal = scoped_session(
                 sessionmaker(
                     autocommit=False,
                     autoflush=False,
-                    bind=self.sql_server_engine
+                    bind=self.sql_server_engine,
+                    expire_on_commit=False  # IMPORTANTE: No expirar objetos después del commit
                 )
             )
             
-            # Crear tablas si no existen
             self.create_tables()
             
         except Exception as e:
@@ -104,15 +100,12 @@ class FraudDetectionDbContext:
     def get_firebird_connection(self):
         """Obtiene conexión a Firebird con manejo de reconexión"""
         try:
-            # Verificar si la conexión existe y está activa
             if self.firebird_connection:
-                # Intentar una query simple para verificar la conexión
                 cursor = self.firebird_connection.cursor()
                 cursor.execute("SELECT 1 FROM RDB$DATABASE")
                 cursor.close()
                 return self.firebird_connection
         except:
-            # Si falla, cerrar la conexión antigua
             if self.firebird_connection:
                 try:
                     self.firebird_connection.close()
@@ -120,7 +113,6 @@ class FraudDetectionDbContext:
                     pass
                 self.firebird_connection = None
         
-        # Crear nueva conexión
         try:
             dsn = os.getenv('FIREBIRD_DSN')
             self.firebird_connection = pyodbc.connect(dsn, timeout=10)
@@ -143,7 +135,6 @@ class FraudDetectionDbContext:
             columns = [column[0] for column in cursor.description]
             results = []
             
-            # Limitar resultados para evitar que se cuelgue
             row_count = 0
             while row_count < fetch_size:
                 row = cursor.fetchone()
@@ -157,15 +148,41 @@ class FraudDetectionDbContext:
         finally:
             cursor.close()
     
-    # Métodos específicos para casos de fraude
+    def _fraud_case_to_dict(self, case: FraudCase) -> Dict:
+        """Convierte un FraudCase a diccionario con todos los campos"""
+        return {
+            'id': case.id,
+            'case_number': case.case_number,
+            'detector_type': case.detector_type.value if case.detector_type else None,
+            'severity': case.severity.value if case.severity else None,
+            'status': case.status.value if case.status else 'PENDIENTE',
+            'title': case.title,
+            'description': case.description,
+            'amount': float(case.amount) if case.amount else None,
+            'source_table': case.source_table,
+            'source_record_id': case.source_record_id,
+            'transaction_date': case.transaction_date,
+            'client_code': case.client_code,
+            'client_name': case.client_name,
+            'client_ruc': case.client_ruc,
+            'detection_date': case.detection_date,
+            'detection_rules': case.detection_rules,
+            'confidence_score': float(case.confidence_score) if case.confidence_score else None,
+            'created_at': case.created_at,
+            'updated_at': case.updated_at,
+            'created_by': case.created_by,
+            'updated_by': case.updated_by
+        }
+    
     def get_fraud_cases(self, 
                        status: str = None, 
                        detector_type: str = None,
                        date_from: datetime = None,
                        date_to: datetime = None,
-                       limit: int = 100) -> List[FraudCase]:
-        """Obtiene casos de fraude con filtros"""
-        with self.get_session() as session:
+                       limit: int = 100) -> List[Dict]:
+        """Obtiene casos de fraude y los devuelve como diccionarios"""
+        session = self.SessionLocal()
+        try:
             query = session.query(FraudCase)
             
             if status:
@@ -177,11 +194,20 @@ class FraudDetectionDbContext:
             if date_to:
                 query = query.filter(FraudCase.transaction_date <= date_to)
             
-            return query.order_by(FraudCase.detection_date.desc()).limit(limit).all()
+            cases = query.order_by(FraudCase.detection_date.desc()).limit(limit).all()
+            
+            # Convertir a diccionarios antes de cerrar la sesión
+            result = [self._fraud_case_to_dict(case) for case in cases]
+            
+            return result
+            
+        finally:
+            session.close()
     
-    def create_fraud_case(self, fraud_data: Dict[str, Any]) -> FraudCase:
-        """Crea un nuevo caso de fraude y retorna el objeto completo"""
-        with self.get_session() as session:
+    def create_fraud_case(self, fraud_data: Dict[str, Any]) -> Dict:
+        """Crea un nuevo caso de fraude y retorna un diccionario"""
+        session = self.SessionLocal()
+        try:
             # Generar número de caso único
             import uuid
             fraud_data['case_number'] = f"FRAUD-{datetime.now().strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
@@ -193,39 +219,17 @@ class FraudDetectionDbContext:
             # Crear instancia del caso
             fraud_case = FraudCase(**fraud_data)
             
-            # Agregar a la sesión y hacer commit
+            # Agregar y hacer commit
             session.add(fraud_case)
             session.commit()
             
-            # Hacer refresh para obtener el ID generado
+            # Hacer refresh para obtener el ID
             session.refresh(fraud_case)
             
-            # Obtener todos los datos necesarios antes de cerrar la sesión
-            case_data = {
-                'id': fraud_case.id,
-                'case_number': fraud_case.case_number,
-                'detector_type': fraud_case.detector_type.value if fraud_case.detector_type else None,
-                'severity': fraud_case.severity.value if fraud_case.severity else None,
-                'status': fraud_case.status.value if fraud_case.status else 'PENDIENTE',
-                'title': fraud_case.title,
-                'description': fraud_case.description,
-                'amount': float(fraud_case.amount) if fraud_case.amount else None,
-                'source_table': fraud_case.source_table,
-                'source_record_id': fraud_case.source_record_id,
-                'transaction_date': fraud_case.transaction_date,
-                'client_code': fraud_case.client_code,
-                'client_name': fraud_case.client_name,
-                'client_ruc': fraud_case.client_ruc,
-                'detection_date': fraud_case.detection_date,
-                'detection_rules': fraud_case.detection_rules,
-                'confidence_score': float(fraud_case.confidence_score) if fraud_case.confidence_score else None,
-                'created_at': fraud_case.created_at,
-                'updated_at': fraud_case.updated_at,
-                'created_by': fraud_case.created_by,
-                'updated_by': fraud_case.updated_by
-            }
+            # Convertir a diccionario ANTES de cerrar la sesión
+            case_dict = self._fraud_case_to_dict(fraud_case)
             
-            # Registrar en auditoría (en la misma sesión)
+            # Log de auditoría
             audit_log = AuditLog(
                 action="CREATE_FRAUD_CASE",
                 entity_type="FraudCase",
@@ -238,17 +242,24 @@ class FraudDetectionDbContext:
             session.add(audit_log)
             session.commit()
             
-            # Crear un objeto mock con todos los atributos necesarios
-            class FraudCaseMock:
+            # Crear objeto simple para compatibilidad
+            class FraudCaseResult:
                 def __init__(self, data):
                     for key, value in data.items():
                         setattr(self, key, value)
             
-            return FraudCaseMock(case_data)
+            return FraudCaseResult(case_dict)
+            
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
     
     def update_fraud_case_status(self, case_id: int, new_status: str, user: str, notes: str = None) -> bool:
         """Actualiza el estado de un caso de fraude"""
-        with self.get_session() as session:
+        session = self.SessionLocal()
+        try:
             fraud_case = session.query(FraudCase).filter(FraudCase.id == case_id).first()
             
             if not fraud_case:
@@ -274,20 +285,38 @@ class FraudDetectionDbContext:
             
             session.commit()
             return True
+            
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
     
     def get_detector_configs(self, enabled_only: bool = True) -> List[DetectorConfig]:
         """Obtiene configuraciones de detectores"""
-        with self.get_session() as session:
+        session = self.SessionLocal()
+        try:
             query = session.query(DetectorConfig)
             if enabled_only:
                 query = query.filter(DetectorConfig.enabled == True)
-            return query.all()
+            configs = query.all()
+            
+            # Hacer una copia de los datos antes de cerrar la sesión
+            result = []
+            for config in configs:
+                result.append(config)
+            
+            return result
+            
+        finally:
+            session.close()
     
     def log_audit(self, action: str, entity_type: str, entity_id: str, 
                   old_values: str = None, new_values: str = None, 
                   user: str = "SYSTEM", fraud_case_id: int = None):
         """Registra una entrada en el log de auditoría"""
-        with self.get_session() as session:
+        session = self.SessionLocal()
+        try:
             audit_log = AuditLog(
                 action=action,
                 entity_type=entity_type,
@@ -300,10 +329,13 @@ class FraudDetectionDbContext:
             )
             session.add(audit_log)
             session.commit()
+        finally:
+            session.close()
     
     def get_fraud_statistics(self, date_from: datetime = None, date_to: datetime = None) -> Dict:
         """Obtiene estadísticas de casos de fraude"""
-        with self.get_session() as session:
+        session = self.SessionLocal()
+        try:
             query = session.query(FraudCase)
             
             if date_from:
@@ -313,14 +345,13 @@ class FraudDetectionDbContext:
             
             cases = query.all()
             
-            # Manejar valores None en status y severity
             def safe_enum_value(obj, attr):
                 val = getattr(obj, attr, None)
                 if val and hasattr(val, 'value'):
                     return val.value
                 return None
             
-            return {
+            stats = {
                 "total_cases": len(cases),
                 "pending": len([c for c in cases if safe_enum_value(c, 'status') == "PENDIENTE"]),
                 "confirmed": len([c for c in cases if safe_enum_value(c, 'status') == "CONFIRMADO"]),
@@ -333,6 +364,11 @@ class FraudDetectionDbContext:
                     "BAJO": len([c for c in cases if safe_enum_value(c, 'severity') == "BAJO"])
                 }
             }
+            
+            return stats
+            
+        finally:
+            session.close()
     
     def close(self):
         """Cierra todas las conexiones"""
