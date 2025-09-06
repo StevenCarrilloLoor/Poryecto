@@ -1,5 +1,5 @@
 /**
- * Componente Dashboard principal
+ * Componente Dashboard principal - VERSIÓN CORREGIDA
  * frontend/src/components/Dashboard.tsx
  */
 
@@ -27,6 +27,7 @@ import {
   DialogContent,
   DialogActions,
   LinearProgress,
+  CircularProgress,
 } from '@mui/material';
 import {
   DataGrid,
@@ -86,16 +87,19 @@ const Dashboard: React.FC = () => {
   const [notifications, setNotifications] = useState<string[]>([]);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+  
 
   // Query para obtener estadísticas del dashboard
-  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useQuery<DashboardStats>({
+  const { data: stats, isLoading: statsLoading, refetch: refetchStats, error: statsError } = useQuery<DashboardStats>({
     queryKey: ['dashboardStats'],
     queryFn: apiService.getDashboardStats,
-    refetchInterval: 30000, // Auto-refresh cada 30 segundos
+    refetchInterval: 30000,
+     // Auto-refresh cada 30 segundos
   });
-
+  
   // Query para obtener casos de fraude
-  const { data: fraudCases = [], isLoading: casesLoading, refetch: refetchCases } = useQuery<FraudCase[]>({
+  const { data: fraudCases = [], isLoading: casesLoading, refetch: refetchCases, error: casesError } = useQuery<FraudCase[]>({
     queryKey: ['fraudCases'],
     queryFn: () => apiService.getFraudCases(),
     refetchInterval: 30000,
@@ -109,13 +113,16 @@ const Dashboard: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['fraudCases'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       setSnackbarMessage('Estado actualizado correctamente');
+      setSnackbarSeverity('success');
       setSnackbarOpen(true);
       setStatusDialogOpen(false);
       setNewStatus('');
       setStatusNotes('');
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Error updating status:', error);
       setSnackbarMessage('Error al actualizar el estado');
+      setSnackbarSeverity('error');
       setSnackbarOpen(true);
     },
   });
@@ -126,11 +133,17 @@ const Dashboard: React.FC = () => {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['fraudCases'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
-      setSnackbarMessage(`Detección completada: ${data.cases_detected} casos encontrados`);
+      const message = data.success 
+        ? `Detección completada: ${data.cases_detected} casos encontrados`
+        : 'Detección completada sin nuevos casos';
+      setSnackbarMessage(message);
+      setSnackbarSeverity('success');
       setSnackbarOpen(true);
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Error running detection:', error);
       setSnackbarMessage('Error al ejecutar detección');
+      setSnackbarSeverity('error');
       setSnackbarOpen(true);
     },
   });
@@ -139,7 +152,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const ws = apiService.connectWebSocket((data) => {
       if (data.event === 'new_case' || data.event === 'auto_detection') {
-        const newNotification = `Nuevo caso detectado: ${data.case.title}`;
+        const newNotification = `Nuevo caso detectado: ${data.case.title || 'Sin título'}`;
         setNotifications(prev => [newNotification, ...prev].slice(0, 10));
         queryClient.invalidateQueries({ queryKey: ['fraudCases'] });
         queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
@@ -196,7 +209,7 @@ const Dashboard: React.FC = () => {
           label={params.value}
           size="small"
           sx={{
-            backgroundColor: COLORS[params.value as keyof typeof COLORS],
+            backgroundColor: COLORS[params.value as keyof typeof COLORS] || '#999',
             color: 'white',
           }}
         />
@@ -284,21 +297,41 @@ const Dashboard: React.FC = () => {
     },
   ];
 
-  // Preparar datos para gráficos
-  const severityChartData = stats
+  // Preparar datos para gráficos - con valores por defecto
+  const severityChartData = stats?.cases_by_severity
     ? Object.entries(stats.cases_by_severity).map(([key, value]) => ({
         name: key,
-        value: value,
+        value: value || 0,
       }))
-    : [];
+    : [
+        { name: 'CRITICO', value: 0 },
+        { name: 'ALTO', value: 0 },
+        { name: 'MEDIO', value: 0 },
+        { name: 'BAJO', value: 0 },
+      ];
 
   const statusChartData = stats
     ? [
-        { name: 'Pendientes', value: stats.pending_cases, color: '#ff9800' },
-        { name: 'Confirmados', value: stats.confirmed_cases, color: '#f44336' },
-        { name: 'Rechazados', value: stats.rejected_cases, color: '#9e9e9e' },
+        { name: 'Pendientes', value: stats.pending_cases || 0, color: '#ff9800' },
+        { name: 'Confirmados', value: stats.confirmed_cases || 0, color: '#f44336' },
+        { name: 'Rechazados', value: stats.rejected_cases || 0, color: '#9e9e9e' },
       ]
-    : [];
+    : [
+        { name: 'Pendientes', value: 0, color: '#ff9800' },
+        { name: 'Confirmados', value: 0, color: '#f44336' },
+        { name: 'Rechazados', value: 0, color: '#9e9e9e' },
+      ];
+
+  // Mostrar errores si existen
+  if (statsError || casesError) {
+    console.error('Dashboard errors:', { statsError, casesError });
+  }
+  
+  useEffect(() => {
+  console.log('Stats data:', stats);
+  console.log('Severity chart data:', severityChartData);
+  console.log('Status chart data:', statusChartData);
+  }, [stats, severityChartData, statusChartData]);
 
   return (
     <Box sx={{ flexGrow: 1, height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -312,10 +345,10 @@ const Dashboard: React.FC = () => {
           <Tooltip title="Ejecutar Detección Manual">
             <IconButton
               color="inherit"
-              onClick={() => runDetectionMutation.mutate()}
+              onClick={() => runDetectionMutation.mutate({})}
               disabled={runDetectionMutation.isPending}
             >
-              <PlayArrowIcon />
+              {runDetectionMutation.isPending ? <CircularProgress size={24} color="inherit" /> : <PlayArrowIcon />}
             </IconButton>
           </Tooltip>
           <Tooltip title="Actualizar">
@@ -348,7 +381,7 @@ const Dashboard: React.FC = () => {
                   Total Casos
                 </Typography>
                 <Typography variant="h4">
-                  {stats?.total_cases || 0}
+                  {statsLoading ? <CircularProgress size={30} /> : (stats?.total_cases || 0)}
                 </Typography>
               </CardContent>
             </Card>
@@ -360,7 +393,7 @@ const Dashboard: React.FC = () => {
                   Casos Pendientes
                 </Typography>
                 <Typography variant="h4" color="warning.main">
-                  {stats?.pending_cases || 0}
+                  {statsLoading ? <CircularProgress size={30} /> : (stats?.pending_cases || 0)}
                 </Typography>
               </CardContent>
             </Card>
@@ -372,7 +405,7 @@ const Dashboard: React.FC = () => {
                   Monto Total
                 </Typography>
                 <Typography variant="h4">
-                  ${stats?.total_amount?.toLocaleString('es-ES', { minimumFractionDigits: 2 }) || '0.00'}
+                  ${statsLoading ? '...' : (stats?.total_amount?.toLocaleString('es-ES', { minimumFractionDigits: 2 }) || '0.00')}
                 </Typography>
               </CardContent>
             </Card>
@@ -384,7 +417,7 @@ const Dashboard: React.FC = () => {
                   Detectados Hoy
                 </Typography>
                 <Typography variant="h4" color="primary">
-                  {stats?.detection_rate_today || 0}
+                  {statsLoading ? <CircularProgress size={30} /> : (stats?.detection_rate_today || 0)}
                 </Typography>
               </CardContent>
             </Card>
@@ -396,25 +429,35 @@ const Dashboard: React.FC = () => {
               <Typography variant="h6" gutterBottom>
                 Casos por Severidad
               </Typography>
-              <ResponsiveContainer width="100%" height="90%">
-                <PieChart>
-                  <Pie
-                    data={severityChartData}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, value }) => `${name}: ${value}`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                  >
-                    {severityChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[entry.name as keyof typeof COLORS]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip />
-                </PieChart>
-              </ResponsiveContainer>
+              {statsLoading ? (
+                <Box display="flex" justifyContent="center" alignItems="center" height="90%">
+                  <CircularProgress />
+                </Box>
+              ) : severityChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="90%">
+                  <PieChart>
+                    <Pie
+                      data={severityChartData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, value }) => `${name}: ${value}`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {severityChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[entry.name as keyof typeof COLORS] || '#999'} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <Box display="flex" justifyContent="center" alignItems="center" height="90%">
+                  <Typography color="textSecondary">Sin datos disponibles</Typography>
+                </Box>
+              )}
             </Paper>
           </Grid>
 
@@ -423,19 +466,29 @@ const Dashboard: React.FC = () => {
               <Typography variant="h6" gutterBottom>
                 Estado de Casos
               </Typography>
-              <ResponsiveContainer width="100%" height="90%">
-                <BarChart data={statusChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <RechartsTooltip />
-                  <Bar dataKey="value" fill="#8884d8">
-                    {statusChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {statsLoading ? (
+                <Box display="flex" justifyContent="center" alignItems="center" height="90%">
+                  <CircularProgress />
+                </Box>
+              ) : statusChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="90%">
+                  <BarChart data={statusChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <RechartsTooltip />
+                    <Bar dataKey="value" fill="#8884d8">
+                      {statusChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <Box display="flex" justifyContent="center" alignItems="center" height="90%">
+                  <Typography color="textSecondary">Sin datos disponibles</Typography>
+                </Box>
+              )}
             </Paper>
           </Grid>
 
@@ -598,8 +651,15 @@ const Dashboard: React.FC = () => {
         open={snackbarOpen}
         autoHideDuration={6000}
         onClose={() => setSnackbarOpen(false)}
-        message={snackbarMessage}
-      />
+      >
+        <Alert
+          onClose={() => setSnackbarOpen(false)}
+          severity={snackbarSeverity}
+          sx={{ width: '100%' }}
+        >
+          {snackbarMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

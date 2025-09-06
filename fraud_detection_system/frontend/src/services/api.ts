@@ -1,5 +1,5 @@
 /**
- * Servicio API para comunicación con el backend
+ * Servicio API para comunicación con el backend - VERSIÓN CORREGIDA
  * frontend/src/services/api.ts
  */
 
@@ -77,7 +77,7 @@ export interface DetectorConfig {
 }
 
 export interface RunDetectionRequest {
-  detector_types?: DetectorType[];
+  detector_types?: string[];
   date_from?: string;
   date_to?: string;
 }
@@ -91,6 +91,8 @@ export interface RunDetectionResponse {
     case_number: string;
     title: string;
   }>;
+  detectors_run?: string[];
+  error?: string;
 }
 
 class ApiService {
@@ -112,7 +114,7 @@ class ApiService {
         console.error('API Error:', error);
         if (error.response?.status === 401) {
           // Manejar autenticación si es necesario
-          window.location.href = '/login';
+          // window.location.href = '/login';
         }
         return Promise.reject(error);
       }
@@ -156,8 +158,9 @@ class ApiService {
     return response.data;
   }
 
-  // Detección
+  // Detección - CORREGIDO: Hacer el parámetro opcional
   async runDetection(request?: RunDetectionRequest): Promise<RunDetectionResponse> {
+    // Si no se proporciona request, enviar un objeto vacío
     const response = await this.api.post<RunDetectionResponse>('/run-detection', request || {});
     return response.data;
   }
