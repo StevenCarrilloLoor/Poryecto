@@ -1,5 +1,5 @@
 /**
- * Servicio API para comunicación con el backend - VERSIÓN CORREGIDA
+ * Servicio API para comunicación con el backend - VERSIÓN FINAL CORREGIDA
  * frontend/src/services/api.ts
  */
 
@@ -99,6 +99,7 @@ class ApiService {
   private api: AxiosInstance;
 
   constructor() {
+    // Crear instancia de axios
     this.api = axios.create({
       baseURL: API_BASE_URL,
       timeout: 30000,
@@ -107,7 +108,12 @@ class ApiService {
       },
     });
 
-    // Interceptor para manejo de errores
+    // Configurar interceptores
+    this.setupInterceptors();
+  }
+
+  private setupInterceptors = (): void => {
+    // Interceptor de respuesta para manejo de errores
     this.api.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -121,66 +127,100 @@ class ApiService {
     );
   }
 
-  // Casos de Fraude
-  async getFraudCases(params?: {
+  // Casos de Fraude - USAR FUNCIÓN FLECHA
+  getFraudCases = async (params?: {
     status?: FraudStatus;
     detector_type?: DetectorType;
     date_from?: string;
     date_to?: string;
     limit?: number;
-  }): Promise<FraudCase[]> {
-    const response = await this.api.get<FraudCase[]>('/fraud-cases', { params });
-    return response.data;
+  }): Promise<FraudCase[]> => {
+    try {
+      const response = await this.api.get<FraudCase[]>('/fraud-cases', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Error getting fraud cases:', error);
+      throw error;
+    }
   }
 
-  async getFraudCase(caseId: number): Promise<FraudCase> {
-    const response = await this.api.get<FraudCase>(`/fraud-cases/${caseId}`);
-    return response.data;
+  getFraudCase = async (caseId: number): Promise<FraudCase> => {
+    try {
+      const response = await this.api.get<FraudCase>(`/fraud-cases/${caseId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error getting fraud case:', error);
+      throw error;
+    }
   }
 
-  async updateCaseStatus(
+  updateCaseStatus = async (
     caseId: number,
     status: FraudStatus,
     notes: string,
     user: string
-  ): Promise<{ success: boolean; message: string }> {
-    const response = await this.api.patch(`/fraud-cases/${caseId}/status`, {
-      status,
-      notes,
-      user,
-    });
-    return response.data;
+  ): Promise<{ success: boolean; message: string }> => {
+    try {
+      const response = await this.api.patch(`/fraud-cases/${caseId}/status`, {
+        status,
+        notes,
+        user,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error updating case status:', error);
+      throw error;
+    }
   }
 
-  // Dashboard
-  async getDashboardStats(): Promise<DashboardStats> {
-    const response = await this.api.get<DashboardStats>('/dashboard/stats');
-    return response.data;
+  // Dashboard - USAR FUNCIÓN FLECHA
+  getDashboardStats = async (): Promise<DashboardStats> => {
+    try {
+      const response = await this.api.get<DashboardStats>('/dashboard/stats');
+      return response.data;
+    } catch (error) {
+      console.error('Error getting dashboard stats:', error);
+      throw error;
+    }
   }
 
-  // Detección - CORREGIDO: Hacer el parámetro opcional
-  async runDetection(request?: RunDetectionRequest): Promise<RunDetectionResponse> {
-    // Si no se proporciona request, enviar un objeto vacío
-    const response = await this.api.post<RunDetectionResponse>('/run-detection', request || {});
-    return response.data;
+  // Detección - USAR FUNCIÓN FLECHA
+  runDetection = async (request?: RunDetectionRequest): Promise<RunDetectionResponse> => {
+    try {
+      const response = await this.api.post<RunDetectionResponse>('/run-detection', request || {});
+      return response.data;
+    } catch (error) {
+      console.error('Error running detection:', error);
+      throw error;
+    }
   }
 
-  // Configuración
-  async getDetectorConfigs(): Promise<DetectorConfig[]> {
-    const response = await this.api.get<DetectorConfig[]>('/detector-configs');
-    return response.data;
+  // Configuración - USAR FUNCIÓN FLECHA
+  getDetectorConfigs = async (): Promise<DetectorConfig[]> => {
+    try {
+      const response = await this.api.get<DetectorConfig[]>('/detector-configs');
+      return response.data;
+    } catch (error) {
+      console.error('Error getting detector configs:', error);
+      throw error;
+    }
   }
 
-  async updateDetectorConfig(
+  updateDetectorConfig = async (
     configId: number,
     updates: Partial<DetectorConfig>
-  ): Promise<{ success: boolean }> {
-    const response = await this.api.patch(`/detector-configs/${configId}`, updates);
-    return response.data;
+  ): Promise<{ success: boolean }> => {
+    try {
+      const response = await this.api.patch(`/detector-configs/${configId}`, updates);
+      return response.data;
+    } catch (error) {
+      console.error('Error updating detector config:', error);
+      throw error;
+    }
   }
 
-  // WebSocket para notificaciones en tiempo real
-  connectWebSocket(onMessage: (data: any) => void): WebSocket {
+  // WebSocket para notificaciones en tiempo real - USAR FUNCIÓN FLECHA
+  connectWebSocket = (onMessage: (data: any) => void): WebSocket => {
     const ws = new WebSocket(WS_BASE_URL);
 
     ws.onopen = () => {
@@ -189,10 +229,19 @@ class ApiService {
 
     ws.onmessage = (event) => {
       try {
+        // Manejar mensajes especiales como "pong"
+        if (event.data === 'pong') {
+          // Ignorar mensajes pong
+          return;
+        }
+        
         const data = JSON.parse(event.data);
         onMessage(data);
       } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
+        // Solo mostrar error si no es un mensaje "pong"
+        if (event.data !== 'pong') {
+          console.error('Error parsing WebSocket message:', error);
+        }
       }
     };
 
@@ -216,15 +265,18 @@ class ApiService {
     }, 30000);
 
     // Limpiar al cerrar
-    const originalClose = ws.close;
+    const originalClose = ws.close.bind(ws);
     ws.close = function () {
       clearInterval(pingInterval);
-      originalClose.call(ws);
+      originalClose();
     };
 
     return ws;
   }
 }
 
-// Exportar instancia única del servicio
-export const apiService = new ApiService();
+// Crear y exportar una instancia única del servicio
+const apiService = new ApiService();
+
+// Exportar la instancia
+export { apiService };

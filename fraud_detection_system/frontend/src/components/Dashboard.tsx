@@ -345,7 +345,7 @@ const Dashboard: React.FC = () => {
           <Tooltip title="Ejecutar Detección Manual">
             <IconButton
               color="inherit"
-              onClick={() => runDetectionMutation.mutate({})}
+              onClick={() => runDetectionMutation.mutate(undefined)}
               disabled={runDetectionMutation.isPending}
             >
               {runDetectionMutation.isPending ? <CircularProgress size={24} color="inherit" /> : <PlayArrowIcon />}
