@@ -37,3 +37,7 @@ pip install fastapi uvicorn sqlalchemy pyodbc python-dotenv pydantic websockets
 ---------Dependencias-------
 # Instalar requests en tu entorno virtual activo
 pip install requests
+
+--------DATO------------
+El sistema mantendrá total compatibilidad con tu código existente mientras te
+permite agregar nuevos detectores simplemente creando nuevos archivos *_detector.py en el directorio de detectores.

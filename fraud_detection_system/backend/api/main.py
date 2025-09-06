@@ -1,6 +1,6 @@
 """
-API FastAPI principal CORREGIDA - backend/api/main.py
-Corrige: Detección manual, estadísticas en 0, y gráficos vacíos
+API FastAPI principal ACTUALIZADA con Factory Pattern
+backend/api/main.py
 """
 
 from datetime import datetime, timedelta
@@ -15,14 +15,15 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 from database.db_context import db_context
-from services.detectors import FacturasAnomalias, RoboDeCombustible, ManipulacionDatos
+# Importar el factory en lugar de detectores individuales
+from services.detectors import detector_factory
 from models.fraud_models import FraudStatus, FraudSeverity, DetectorType
 
 # Inicializar FastAPI
 app = FastAPI(
     title="Sistema de Detección de Fraude",
     description="API para detección y gestión de fraudes empresariales",
-    version="1.0.0",
+    version="2.0.0",  # Actualizada la versión
     docs_url="/api/docs",
     redoc_url="/api/redoc"
 )
@@ -60,7 +61,7 @@ class UpdateStatusRequest(BaseModel):
     user: str = Field(..., min_length=1)
 
 class DetectorRunRequest(BaseModel):
-    detector_types: Optional[List[DetectorType]] = None
+    detector_types: Optional[List[str]] = None  # Ahora acepta strings
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
 
@@ -74,6 +75,15 @@ class DashboardStats(BaseModel):
     recent_cases: List[FraudCaseResponse]
     detection_rate_today: int
     detection_rate_week: int
+
+# Nuevo modelo para información de detectores
+class DetectorInfo(BaseModel):
+    key: str
+    name: str
+    description: str
+    enabled: bool
+    rules: List[str]
+    thresholds: Optional[Dict[str, Any]] = None
 
 # WebSocket manager
 class ConnectionManager:
@@ -107,33 +117,64 @@ async def root():
     return {
         "status": "online",
         "service": "Fraud Detection System",
-        "timestamp": datetime.utcnow()
+        "version": "2.0.0",
+        "timestamp": datetime.utcnow(),
+        "detectors_available": len(detector_factory.get_available_detectors())
     }
+
+# NUEVO ENDPOINT: Obtener información de detectores disponibles
+@app.get("/api/detectors", response_model=List[DetectorInfo], tags=["Detectors"])
+async def get_available_detectors():
+    """Obtiene información de todos los detectores disponibles"""
+    detector_info = detector_factory.get_detector_info()
+    
+    return [
+        DetectorInfo(
+            key=info["key"],
+            name=info["name"],
+            description=info["description"],
+            enabled=info["enabled"],
+            rules=info["info"]["rules"],
+            thresholds=info["info"].get("thresholds")
+        )
+        for info in detector_info
+    ]
+
+# NUEVO ENDPOINT: Recargar detectores (útil para desarrollo)
+@app.post("/api/detectors/reload", tags=["Detectors"])
+async def reload_detectors():
+    """Recarga todos los detectores (útil cuando se agregan nuevos)"""
+    try:
+        detector_factory.reload_detectors()
+        return {
+            "success": True,
+            "message": "Detectores recargados correctamente",
+            "detectors_loaded": len(detector_factory.get_available_detectors())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/fraud-cases", response_model=List[FraudCaseResponse], tags=["Fraud Cases"])
 async def get_fraud_cases(
     status: Optional[FraudStatus] = None,
-    detector_type: Optional[DetectorType] = None,
+    detector_type: Optional[str] = None,  # Ahora acepta string
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     limit: int = Query(default=100, le=500)
 ):
     """Obtiene lista de casos de fraude con filtros opcionales"""
     try:
-        # get_fraud_cases ahora retorna diccionarios
         cases = db_context.get_fraud_cases(
             status=status.value if status else None,
-            detector_type=detector_type.value if detector_type else None,
+            detector_type=detector_type,  # Ya es string
             date_from=date_from,
             date_to=date_to,
             limit=limit
         )
         
-        # Convertir diccionarios a FraudCaseResponse
         response_cases = []
         for case_dict in cases:
             try:
-                # Asegurar que todos los campos requeridos estén presentes
                 response_data = {
                     'id': case_dict.get('id'),
                     'case_number': case_dict.get('case_number', ''),
@@ -199,7 +240,6 @@ async def update_fraud_case_status(case_id: int, request: UpdateStatusRequest):
     if not success:
         raise HTTPException(status_code=404, detail="Caso no encontrado")
     
-    # Notificar via WebSocket
     await manager.broadcast(json.dumps({
         "event": "status_updated",
         "case_id": case_id,
@@ -211,80 +251,68 @@ async def update_fraud_case_status(case_id: int, request: UpdateStatusRequest):
 
 @app.post("/api/run-detection", tags=["Detection"])
 async def run_detection(request: DetectorRunRequest = None):
-    """Ejecuta los detectores de fraude manualmente - CORREGIDO"""
+    """Ejecuta los detectores de fraude manualmente - USANDO FACTORY"""
     try:
         if request is None:
             request = DetectorRunRequest()
+        
+        print("\n=== Iniciando detección manual ===")
+        print(f"Detectores disponibles: {detector_factory.get_available_detectors()}")
+        
+        # Determinar qué detectores ejecutar
+        if request.detector_types:
+            print(f"Ejecutando detectores específicos: {request.detector_types}")
+            detection_results = detector_factory.run_specific_detectors(request.detector_types)
+        else:
+            print("Ejecutando todos los detectores...")
+            detection_results = detector_factory.run_all_detectors()
+        
+        # Procesar resultados y guardar en base de datos
+        all_results = []
+        for detector_type, fraud_cases in detection_results.items():
+            print(f"\nProcesando resultados de {detector_type}: {len(fraud_cases)} casos")
             
-        print("\nIniciando detección manual...")
-        results = []
-        detectors = []
-        
-        # Configurar detectores
-        if not request.detector_types or DetectorType.INVOICE_ANOMALY in request.detector_types:
-            detectors.append(FacturasAnomalias())
-        if not request.detector_types or DetectorType.FUEL_THEFT in request.detector_types:
-            detectors.append(RoboDeCombustible())
-        if not request.detector_types or DetectorType.DATA_MANIPULATION in request.detector_types:
-            detectors.append(ManipulacionDatos())
-        
-        print(f"Ejecutando {len(detectors)} detectores...")
-        
-        # Ejecutar detectores
-        for detector in detectors:
-            detector_name = detector.__class__.__name__
-            print(f"  Ejecutando {detector_name}...")
-            
-            try:
-                detector_results = detector.detect()
-                print(f"    Detectados: {len([r for r in detector_results if r])} casos nuevos")
-                
-                for fraud_data in detector_results:
-                    if fraud_data:  # Ignorar None (duplicados)
-                        try:
-                            case = db_context.create_fraud_case(fraud_data)
-                            if case:
-                                results.append({
-                                    "detector": detector_name,
-                                    "case_id": case.id,
-                                    "case_number": case.case_number,
-                                    "title": case.title[:50] if case.title else "Sin título"
-                                })
-                                
-                                # Notificar via WebSocket
-                                case_dict = {
-                                    'id': case.id,
-                                    'case_number': case.case_number,
-                                    'detector_type': getattr(case, 'detector_type', 'UNKNOWN'),
-                                    'title': case.title or 'Sin título'
-                                }
-                                
-                                await manager.broadcast(json.dumps({
-                                    "event": "new_case",
-                                    "case": case_dict
-                                }))
-                                
-                        except Exception as e:
-                            print(f"    Error guardando caso: {e}")
+            for fraud_data in fraud_cases:
+                if fraud_data:  # Ignorar None (duplicados)
+                    try:
+                        case = db_context.create_fraud_case(fraud_data)
+                        if case:
+                            all_results.append({
+                                "detector": detector_type,
+                                "case_id": case.id,
+                                "case_number": case.case_number,
+                                "title": case.title[:50] if case.title else "Sin título"
+                            })
                             
-            except Exception as e:
-                print(f"  Error en detector {detector_name}: {e}")
-                import traceback
-                traceback.print_exc()
+                            # Notificar via WebSocket
+                            case_dict = {
+                                'id': case.id,
+                                'case_number': case.case_number,
+                                'detector_type': detector_type,
+                                'title': case.title or 'Sin título'
+                            }
+                            
+                            await manager.broadcast(json.dumps({
+                                "event": "new_case",
+                                "case": case_dict
+                            }))
+                            
+                    except Exception as e:
+                        print(f"    Error guardando caso: {e}")
         
-        print(f"Detección completada. Casos nuevos detectados: {len(results)}")
+        print(f"\n=== Detección completada. Total casos nuevos: {len(all_results)} ===")
         
         return {
             "success": True,
-            "cases_detected": len(results),
-            "results": results
+            "cases_detected": len(all_results),
+            "results": all_results,
+            "detectors_run": list(detection_results.keys())
         }
     
     except Exception as e:
         print(f"Error en run_detection: {e}")
         import traceback
         traceback.print_exc()
-        # Retornar respuesta válida incluso con error
         return {
             "success": False,
             "cases_detected": 0,
@@ -294,15 +322,13 @@ async def run_detection(request: DetectorRunRequest = None):
 
 @app.get("/api/dashboard/stats", response_model=DashboardStats, tags=["Dashboard"])
 async def get_dashboard_stats():
-    """Obtiene estadísticas para el dashboard - CORREGIDO"""
+    """Obtiene estadísticas para el dashboard"""
     try:
         print("\nObteniendo estadísticas del dashboard...")
         
-        # Obtener estadísticas generales
         stats = db_context.get_fraud_statistics()
         print(f"  Estadísticas base: {stats}")
         
-        # Asegurar que cases_by_severity tenga todas las claves necesarias
         cases_by_severity = {
             "CRITICO": 0,
             "ALTO": 0,
@@ -310,18 +336,13 @@ async def get_dashboard_stats():
             "BAJO": 0
         }
         
-        # Actualizar con los valores reales si existen
         if "by_severity" in stats and stats["by_severity"]:
             for key, value in stats["by_severity"].items():
                 if key in cases_by_severity:
                     cases_by_severity[key] = value
         
-        print(f"  Casos por severidad: {cases_by_severity}")
-        
-        # Obtener casos recientes (devuelve diccionarios)
         recent_cases_dicts = db_context.get_fraud_cases(limit=10)
         
-        # Convertir a FraudCaseResponse
         recent_cases = []
         for case_dict in recent_cases_dicts:
             try:
@@ -344,14 +365,12 @@ async def get_dashboard_stats():
                 print(f"  Error procesando caso reciente: {e}")
                 continue
         
-        # Calcular tasas de detección
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=7)
         
         today_stats = db_context.get_fraud_statistics(date_from=today_start)
         week_stats = db_context.get_fraud_statistics(date_from=week_start)
         
-        # Construir respuesta
         response = DashboardStats(
             total_cases=stats.get("total_cases", 0),
             pending_cases=stats.get("pending", 0),
@@ -364,7 +383,6 @@ async def get_dashboard_stats():
             detection_rate_week=week_stats.get("total_cases", 0)
         )
         
-        print(f"  Response: total={response.total_cases}, pending={response.pending_cases}")
         return response
     
     except Exception as e:
@@ -372,7 +390,6 @@ async def get_dashboard_stats():
         import traceback
         traceback.print_exc()
         
-        # Devolver respuesta válida pero vacía en caso de error
         return DashboardStats(
             total_cases=0,
             pending_cases=0,
@@ -387,7 +404,7 @@ async def get_dashboard_stats():
 
 @app.get("/api/detector-configs", tags=["Configuration"])
 async def get_detector_configs():
-    """Obtiene configuraciones de detectores"""
+    """Obtiene configuraciones de detectores desde la base de datos"""
     try:
         configs = db_context.get_detector_configs()
         
@@ -422,55 +439,52 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Background task para detección automática
+# Background task para detección automática con Factory
 async def automatic_detection():
-    """Ejecuta detección automática cada 5 minutos"""
+    """Ejecuta detección automática cada 5 minutos usando Factory"""
     while True:
         await asyncio.sleep(300)  # 5 minutos
         
         try:
-            print("\nEjecutando detección automática...")
-            detectors = [
-                FacturasAnomalias(),
-                RoboDeCombustible(),
-                ManipulacionDatos()
-            ]
+            print("\n=== Ejecutando detección automática ===")
             
-            for detector in detectors:
-                try:
-                    results = detector.detect()
-                    
-                    for fraud_data in results:
-                        if fraud_data:  # Ignorar None
-                            try:
-                                case = db_context.create_fraud_case(fraud_data)
+            # Usar factory para obtener todos los detectores habilitados
+            detection_results = detector_factory.run_all_detectors()
+            
+            for detector_type, fraud_cases in detection_results.items():
+                for fraud_data in fraud_cases:
+                    if fraud_data:  # Ignorar None
+                        try:
+                            case = db_context.create_fraud_case(fraud_data)
+                            
+                            if case:
+                                case_dict = {
+                                    'id': case.id,
+                                    'case_number': case.case_number,
+                                    'detector_type': detector_type,
+                                    'title': getattr(case, 'title', 'Sin título')
+                                }
                                 
-                                if case:
-                                    # Preparar datos para WebSocket
-                                    case_dict = {
-                                        'id': case.id,
-                                        'case_number': case.case_number,
-                                        'detector_type': getattr(case, 'detector_type', 'UNKNOWN'),
-                                        'title': getattr(case, 'title', 'Sin título')
-                                    }
-                                    
-                                    await manager.broadcast(json.dumps({
-                                        "event": "auto_detection",
-                                        "case": case_dict
-                                    }))
-                                    
-                            except Exception as e:
-                                print(f"Error en detección automática: {e}")
+                                await manager.broadcast(json.dumps({
+                                    "event": "auto_detection",
+                                    "case": case_dict
+                                }))
                                 
-                except Exception as e:
-                    print(f"Error ejecutando detector {detector.__class__.__name__}: {e}")
-        
+                        except Exception as e:
+                            print(f"Error en detección automática: {e}")
+                            
         except Exception as e:
             print(f"Error en ciclo de detección: {e}")
 
 @app.on_event("startup")
 async def startup_event():
     """Inicializa tareas en background al iniciar"""
+    # Mostrar detectores disponibles al inicio
+    print("\n=== Sistema de Detección de Fraude ===")
+    print(f"Detectores disponibles: {detector_factory.get_available_detectors()}")
+    print("=====================================\n")
+    
+    # Iniciar detección automática
     asyncio.create_task(automatic_detection())
     print("✓ Sistema de detección de fraude iniciado")
 
