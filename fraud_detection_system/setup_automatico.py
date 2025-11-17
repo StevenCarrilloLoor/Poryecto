@@ -557,6 +557,8 @@ def install_python_dependencies() -> bool:
     essential_packages = [
         'fastapi==0.115.0',
         'uvicorn[standard]==0.32.0',
+        'colorama==0.4.6',
+        'watchfiles==0.21.0',
         'sqlalchemy==2.0.36',
         'pyodbc==5.2.0',
         'firebird-driver==1.10.6',
